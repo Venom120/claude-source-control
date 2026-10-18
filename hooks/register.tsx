@@ -344,7 +344,7 @@ export const register: Register = on => {
     const resize = (d: number) => update($, sc, x => ({ ...x, graphRows: Math.min(30, Math.max(3, x.graphRows + d)) }))
 
     return (
-      <Box flexDirection="column" width="100%" height="100%">
+      <Box flexDirection="column" width="100%" height={(e.props as any)?.scroll?.bodyRows ?? '100%'}>
       <Box flexDirection="column" gap={1} width="100%" flexGrow={1} overflow="hidden">
         <Box alignItems="center" gap={1}>
           <Text bold>SOURCE CONTROL</Text>
