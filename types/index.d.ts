@@ -3,7 +3,7 @@ export type Block = { ours: string[]; theirs: string[]; pick: string | null }
 export type Seg = string | Block
 export type LogRow = { hash: string; subject: string; refs: string; author: string; email: string; rel: string; date: string; body: string; stat: string }
 export type SC = {
-  view: 'list' | 'diff' | 'conflict'
+  view: 'list' | 'diff' | 'conflict' | 'commit'
   root: string
   isRepo: boolean
   branch: string

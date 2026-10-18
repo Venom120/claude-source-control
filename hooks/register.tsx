@@ -162,6 +162,11 @@ async function openDiff($: any, e: Entry, staged: boolean) {
   await update($, sc, s => ({ ...s, view: 'diff', file: e.path, diff }))
 }
 
+async function openCommit($: any, r: LogRow) {
+  const s = await git($, ['show', '--stat', '--format=', r.hash])
+  await update($, sc, x => ({ ...x, view: 'commit', file: r.subject, diff: commitTip(r) + String.fromCharCode(10, 10) + s.stdout.trim() }))
+}
+
 async function openConflict($: any, path: string) {
   const { root } = await read($, sc)
   const base = root || (await $.session.cwd())
@@ -266,6 +271,15 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1} width="100%">
           <Box gap={2} alignItems="center">{back}<Text bold>{s.file}</Text></Box>
           {s.diff ? <Code source={s.diff} format="diff" path={s.file} /> : <Text dimColor>No textual changes (binary or empty file).</Text>}
+        </Box>
+      )
+    }
+
+    if (s.view === 'commit') {
+      return (
+        <Box flexDirection="column" gap={1} width="100%">
+          <Box gap={2} alignItems="center">{back}<Text bold>{s.file}</Text></Box>
+          <Text>{s.diff}</Text>
         </Box>
       )
     }
@@ -415,10 +429,10 @@ export const register: Register = on => {
               const tip = commitTip(r)
               const p = refPills(r.refs, tip)
               return (
-                <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`}>
+                <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`} hover={{ backgroundColor: '#2a2d2e' }}>
                   <Svg source={dot(s.log.length > 1, tip)} alt={r.subject} width={11} height={22} isInteractive />
                   <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-                    <Text bold={i === 0} wrap="truncate-end">{r.subject}</Text>
+                    <Button key={`c${r.hash}`} plain label={r.subject} dimColor onPress={() => openCommit($, r)} />
                   </Box>
                   {p && <Box flexShrink={0}><Svg source={p.src} alt={r.refs} width={p.w} height={22} isInteractive /></Box>}
                 </Box>

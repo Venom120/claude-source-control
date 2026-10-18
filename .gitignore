@@ -1,3 +1,4 @@
 tsconfig.json
 .claude-plugin/types/
 node_modules/
+.serena/
