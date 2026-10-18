@@ -73,33 +73,50 @@ const ICON = {
   branch: icon('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="6" r="1.5"/><path d="M4.5 5v6M11.5 7.5c0 3-7 1.5-7 4"/>'),
 }
 const dot = (line: boolean) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="22" viewBox="0 0 14 22">${line ? '<path d="M7 11v11M7 0v11" stroke="#3794ff" stroke-width="1.5"/>' : ''}<circle cx="7" cy="11" r="4" fill="#3794ff"/></svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="22" viewBox="0 0 11 22">${line ? '<path d="M5.5 0v22" stroke="#3794FF" stroke-width="1"/>' : ''}<circle cx="5.5" cy="11" r="4" fill="#3794FF" stroke="#181818" stroke-width="2"/></svg>`
 
 
 const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-// ref pills as one SVG: blue local, purple remote, gold tag; hover shows every ref
+// Values from microsoft/vscode scm.css + scmHistory.ts: label = 18px high, radius 10, 12px text,
+// 3px-padded 12px branch icon, description capped at 100px, 4px gaps; colours chartsBlue/chartsPurple/#EA5C00.
+const BRANCH_ICON = '<path d="M4.5 3v7M4.5 10c0-3 5-1.5 5-5" stroke="#181818" stroke-width="1.1" fill="none"/><circle cx="4.5" cy="2.5" r="1.3" fill="#181818"/><circle cx="4.5" cy="10.5" r="1.3" fill="#181818"/><circle cx="9.5" cy="4.5" r="1.3" fill="#181818"/>'
 export function refPills(refs: string, max = 3): { src: string; w: number } | null {
-  const all = refs.split(', ').filter(Boolean).map(r => r.replace('HEAD -> ', ''))
+  const raw = refs.split(', ').filter(Boolean)
+  const headName = raw.find(r => r.startsWith('HEAD -> '))?.slice(8)
+  const all = raw.map(r => r.replace('HEAD -> ', ''))
   if (!all.length) return null
   const shown = all.slice(0, max)
   const extra = all.length - shown.length
   let x = 0
   let body = ''
-  const pill = (label: string, fill: string, fg: string) => {
-    const w = Math.round(label.length * 6.3 + 14)
-    body += `<rect x="${x}" y="2" width="${w}" height="18" rx="9" fill="${fill}"/><text x="${x + 7}" y="15" fill="${fg}" font-size="11" font-family="system-ui,sans-serif">${esc(label)}</text>`
+  const pill = (label: string, fill: string, icon: boolean) => {
+    const text = label.length > 15 ? label.slice(0, 14) + '…' : label
+    const tw = Math.min(100, Math.round(text.length * 6.6))
+    const lead = icon ? 18 : 4 // 3px pad + 12px icon + 3px pad
+    const w = lead + tw + 4
+    body += `<rect x="${x}" y="2" width="${w}" height="18" rx="10" fill="${fill}"/>`
+    if (icon) body += `<svg x="${x + 3}" y="5" width="12" height="12" viewBox="0 0 14 14">${BRANCH_ICON}</svg>`
+    body += `<text x="${x + lead}" y="15.5" fill="#181818" font-size="12" font-family="system-ui,sans-serif">${esc(text)}</text>`
     x += w + 4
   }
   for (const r of shown) {
-    const label = r.length > 18 ? r.slice(0, 17) + '…' : r
-    if (r.startsWith('tag: ')) pill(label, '#d7ba7d', '#000')
-    else if (r.includes('/')) pill(label, '#b180d7', '#000')
-    else pill(label, '#3794ff', '#000')
+    if (r.startsWith('tag: ')) pill(r.slice(5), '#d7ba7d', false)
+    else if (r.includes('/')) pill(r, headName && r === `origin/${headName}` ? '#EA5C00' : '#B180D7', true)
+    else pill(r, '#3794FF', true)
   }
-  if (extra > 0) pill(`+${extra}`, '#5a5a5a', '#fff')
+  if (extra > 0) pill(`+${extra}`, '#4D4D4D', false)
   const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${x}" height="22" viewBox="0 0 ${x} 22"><title>${all.map(esc).join('&#10;')}</title>${body}</svg>`
   return { src, w: x }
+}
+
+// count badge: badge.background #4D4D4D, 18px high, fully rounded (scm.css .monaco-count-badge)
+export const badge = (n: number) => {
+  const w = Math.max(18, String(n).length * 7 + 11)
+  return {
+    w,
+    src: `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="18" viewBox="0 0 ${w} 18"><rect width="${w}" height="18" rx="9" fill="#4D4D4D"/><text x="${w / 2}" y="13" text-anchor="middle" fill="#fff" font-size="11" font-family="system-ui,sans-serif">${n}</text></svg>`,
+  }
 }
 
 const STATUS: Record<string, string> = { M: '#e2c08d', A: '#73c991', '?': '#73c991', D: '#c74e39', R: '#73c991', U: '#c74e39' }
@@ -302,7 +319,7 @@ export const register: Register = on => {
       <Box gap={1} alignItems="center" key={`h${k}`}>
         {ic(isOpen(k) ? ICON.down : ICON.right, 'toggle')}
         <Button key={`t${k}`} plain label={title} onPress={() => toggle(k)} />
-        {count !== undefined && <Text backgroundColor={tint ?? '#4d4d4d'} color="white"> {count} </Text>}
+        {count !== undefined && <Svg source={badge(count).src} alt={`${count}`} width={badge(count).w} height={18} />}
       </Box>
     )
 
@@ -386,7 +403,7 @@ export const register: Register = on => {
               const p = refPills(r.refs)
               return (
                 <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`}>
-                  <Svg source={dot(s.log.length > 1)} alt="commit" width={14} height={22} />
+                  <Svg source={dot(s.log.length > 1)} alt="commit" width={11} height={22} />
                   <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                     <Text bold={i === 0} wrap="truncate-end">{r.subject}</Text>
                   </Box>
