@@ -1,0 +1,11 @@
+{
+  "name": "claude-source-control",
+  "owner": { "name": "Venom120" },
+  "plugins": [
+    {
+      "name": "claude-source-control",
+      "source": "./",
+      "description": "VS Code-style Source Control pane for Claude Desktop."
+    }
+  ]
+}
