@@ -1,7 +1,7 @@
 export type Entry = { x: string; y: string; path: string }
 export type Block = { ours: string[]; theirs: string[]; pick: string | null }
 export type Seg = string | Block
-export type LogRow = { hash: string; subject: string; refs: string }
+export type LogRow = { hash: string; subject: string; refs: string; author: string; email: string; rel: string; date: string; body: string; stat: string }
 export type SC = {
   view: 'list' | 'diff' | 'conflict'
   root: string

@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { parseStatus, parseConflicts, joinSegs, refPills } from './register'
+import { parseStatus, parseConflicts, joinSegs, refPills, parseLog, commitTip } from './register'
 
 test('parses status and conflicts', () => {
   const s = parseStatus('## main...origin/main [ahead 1]\nUU a.txt\n M b.txt\n?? c.txt\n')
@@ -18,4 +18,15 @@ test('ref pills', () => {
   const p = refPills('HEAD -> main, origin/main, origin/HEAD, tag: v1')
   expect(p!.src.includes('+1')).toBe(true)
   expect(p!.w > 0).toBe(true)
+})
+
+test('log hover', () => {
+  const RS = String.fromCharCode(30)
+  const US = String.fromCharCode(31)
+  const NL = String.fromCharCode(10)
+  const out = RS + ['abc123', 'Ada', 'a@x.io', '2 days ago', 'Mon Oct 16 2026 10:00', 'HEAD -> main, origin/main', 'fix: thing' + NL + NL + 'long body', NL + NL + ' 2 files changed, 3 insertions(+), 1 deletion(-)'].join(US)
+  const [r] = parseLog(out)
+  expect(r.subject).toBe('fix: thing')
+  expect(commitTip(r).includes('2 files changed')).toBe(true)
+  expect(commitTip(r).includes('long body')).toBe(true)
 })

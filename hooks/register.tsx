@@ -21,11 +21,21 @@ export function parseStatus(out: string): { branch: string; sync: string; entrie
   return { branch: m?.[1] ?? head, sync: m?.[2] ?? '', entries }
 }
 
+const RS = String.fromCharCode(30) // record separator
+const US = String.fromCharCode(31) // field separator
+
+// records split by RS, fields by US; a trailing --shortstat line follows the body
 export function parseLog(out: string): LogRow[] {
-  return out.split('\n').filter(Boolean).map(l => {
-    const [hash, subject, refs] = l.split('\t')
-    return { hash, subject, refs: refs ?? '' }
+  return out.split(RS).filter(r => r.trim()).map(rec => {
+    const [hash, author, email, rel, date, refs, body, rest] = rec.split(US)
+    return { hash, subject: (body ?? '').split(String.fromCharCode(10))[0], refs: refs ?? '', author, email, rel, date, body: (body ?? '').trim(), stat: (rest ?? '').trim() }
   })
+}
+
+// plain-text version of VS Code's history-item hover: author/date, message, refs, stats, hash
+export function commitTip(r: LogRow): string {
+  const refs = r.refs.split(', ').filter(Boolean).map(x => x.replace('HEAD -> ', '')).join(', ')
+  return [`${r.author} <${r.email}>, ${r.rel} (${r.date})`, r.body, refs, r.stat, r.hash].filter(Boolean).join(String.fromCharCode(10, 10))
 }
 
 export function parseConflicts(text: string): Seg[] {
@@ -72,16 +82,18 @@ const ICON = {
   refresh: icon('<path d="M13 8a5 5 0 1 1-1.6-3.7"/><path d="M13 2.5v3h-3"/>'),
   branch: icon('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="6" r="1.5"/><path d="M4.5 5v6M11.5 7.5c0 3-7 1.5-7 4"/>'),
 }
-const dot = (line: boolean) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="22" viewBox="0 0 11 22">${line ? '<path d="M5.5 0v22" stroke="#3794FF" stroke-width="1"/>' : ''}<circle cx="5.5" cy="11" r="4" fill="#3794FF" stroke="#181818" stroke-width="2"/></svg>`
+const dot = (line: boolean, tip: string) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="22" viewBox="0 0 11 22"><title>${titleText(tip)}</title>${line ? '<path d="M5.5 0v22" stroke="#3794FF" stroke-width="1"/>' : ''}<circle cx="5.5" cy="11" r="4" fill="#3794FF" stroke="#181818" stroke-width="2"/></svg>`
 
 
+const NL = String.fromCharCode(10)
+const titleText = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').split(NL).join('&#10;')
 const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 // Values from microsoft/vscode scm.css + scmHistory.ts: label = 18px high, radius 10, 12px text,
 // 3px-padded 12px branch icon, description capped at 100px, 4px gaps; colours chartsBlue/chartsPurple/#EA5C00.
 const BRANCH_ICON = '<path d="M4.5 3v7M4.5 10c0-3 5-1.5 5-5" stroke="#181818" stroke-width="1.1" fill="none"/><circle cx="4.5" cy="2.5" r="1.3" fill="#181818"/><circle cx="4.5" cy="10.5" r="1.3" fill="#181818"/><circle cx="9.5" cy="4.5" r="1.3" fill="#181818"/>'
-export function refPills(refs: string, max = 3): { src: string; w: number } | null {
+export function refPills(refs: string, tip?: string, max = 3): { src: string; w: number } | null {
   const raw = refs.split(', ').filter(Boolean)
   const headName = raw.find(r => r.startsWith('HEAD -> '))?.slice(8)
   const all = raw.map(r => r.replace('HEAD -> ', ''))
@@ -106,7 +118,7 @@ export function refPills(refs: string, max = 3): { src: string; w: number } | nu
     else pill(r, '#3794FF', true)
   }
   if (extra > 0) pill(`+${extra}`, '#4D4D4D', false)
-  const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${x}" height="22" viewBox="0 0 ${x} 22"><title>${all.map(esc).join('&#10;')}</title>${body}</svg>`
+  const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${x}" height="22" viewBox="0 0 ${x} 22"><title>${tip ? titleText(tip) : all.map(esc).join('&#10;')}</title>${body}</svg>`
   return { src, w: x }
 }
 
@@ -130,7 +142,7 @@ async function refresh($: any) {
   const r = await git($, ['status', '--porcelain=v1', '-b'])
   if (r.exitCode !== 0) return update($, sc, s => ({ ...s, isRepo: false, entries: [], log: [], note: '' }))
   const st = parseStatus(r.stdout)
-  const l = await git($, ['log', '-n', '60', '--pretty=format:%h%x09%s%x09%D'])
+  const l = await git($, ['log', '-n', '60', '--shortstat', '--date=format:%a %b %d %Y %H:%M', '--pretty=format:%x1e%h%x1f%an%x1f%ae%x1f%ar%x1f%ad%x1f%D%x1f%B%x1f'])
   return update($, sc, s => ({ ...s, ...st, isRepo: true, log: l.exitCode === 0 ? parseLog(l.stdout) : [] }))
 }
 
@@ -400,10 +412,11 @@ export const register: Register = on => {
         {isOpen('graph') && (
           <Box flexDirection="column" height={s.graphRows} overflow="hidden">
             {s.log.map((r: LogRow, i: number) => {
-              const p = refPills(r.refs)
+              const tip = commitTip(r)
+              const p = refPills(r.refs, tip)
               return (
                 <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`}>
-                  <Svg source={dot(s.log.length > 1)} alt="commit" width={11} height={22} />
+                  <Svg source={dot(s.log.length > 1, tip)} alt={r.subject} width={11} height={22} isInteractive />
                   <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                     <Text bold={i === 0} wrap="truncate-end">{r.subject}</Text>
                   </Box>
