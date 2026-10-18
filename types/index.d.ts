@@ -10,6 +10,7 @@ export type SC = {
   sync: string
   entries: Entry[]
   log: LogRow[]
+  graphRows: number
   collapsed: string[]
   msg: string
   pathInput: string

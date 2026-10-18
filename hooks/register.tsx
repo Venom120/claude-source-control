@@ -5,7 +5,7 @@ import type { Block, Entry, LogRow, SC, Seg } from '../types'
 
 const PANE = 'source-control'
 const init: SC = {
-  view: 'list', root: '', isRepo: true, branch: '', sync: '', entries: [], log: [], collapsed: [],
+  view: 'list', root: '', isRepo: true, branch: '', sync: '', entries: [], log: [], graphRows: 10, collapsed: [],
   msg: '', pathInput: '', note: '', file: '', diff: '', segs: [], editing: -1,
 }
 const sc = atom({ plugin: 'claude-source-control', key: 'sc' } as const, init)
@@ -75,6 +75,33 @@ const ICON = {
 const dot = (line: boolean) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="22" viewBox="0 0 14 22">${line ? '<path d="M7 11v11M7 0v11" stroke="#3794ff" stroke-width="1.5"/>' : ''}<circle cx="7" cy="11" r="4" fill="#3794ff"/></svg>`
 
+
+const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// ref pills as one SVG: blue local, purple remote, gold tag; hover shows every ref
+export function refPills(refs: string, max = 3): { src: string; w: number } | null {
+  const all = refs.split(', ').filter(Boolean).map(r => r.replace('HEAD -> ', ''))
+  if (!all.length) return null
+  const shown = all.slice(0, max)
+  const extra = all.length - shown.length
+  let x = 0
+  let body = ''
+  const pill = (label: string, fill: string, fg: string) => {
+    const w = Math.round(label.length * 6.3 + 14)
+    body += `<rect x="${x}" y="2" width="${w}" height="18" rx="9" fill="${fill}"/><text x="${x + 7}" y="15" fill="${fg}" font-size="11" font-family="system-ui,sans-serif">${esc(label)}</text>`
+    x += w + 4
+  }
+  for (const r of shown) {
+    const label = r.length > 18 ? r.slice(0, 17) + '…' : r
+    if (r.startsWith('tag: ')) pill(label, '#d7ba7d', '#000')
+    else if (r.includes('/')) pill(label, '#b180d7', '#000')
+    else pill(label, '#3794ff', '#000')
+  }
+  if (extra > 0) pill(`+${extra}`, '#5a5a5a', '#fff')
+  const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${x}" height="22" viewBox="0 0 ${x} 22"><title>${all.map(esc).join('&#10;')}</title>${body}</svg>`
+  return { src, w: x }
+}
+
 const STATUS: Record<string, string> = { M: '#e2c08d', A: '#73c991', '?': '#73c991', D: '#c74e39', R: '#73c991', U: '#c74e39' }
 
 async function git($: any, args: string[]) {
@@ -86,7 +113,7 @@ async function refresh($: any) {
   const r = await git($, ['status', '--porcelain=v1', '-b'])
   if (r.exitCode !== 0) return update($, sc, s => ({ ...s, isRepo: false, entries: [], log: [], note: '' }))
   const st = parseStatus(r.stdout)
-  const l = await git($, ['log', '-n', '12', '--pretty=format:%h%x09%s%x09%D'])
+  const l = await git($, ['log', '-n', '60', '--pretty=format:%h%x09%s%x09%D'])
   return update($, sc, s => ({ ...s, ...st, isRepo: true, log: l.exitCode === 0 ? parseLog(l.stdout) : [] }))
 }
 
@@ -297,8 +324,11 @@ export const register: Register = on => {
       )
     }
 
+    const resize = (d: number) => update($, sc, x => ({ ...x, graphRows: Math.min(30, Math.max(3, x.graphRows + d)) }))
+
     return (
-      <Box flexDirection="column" gap={1} width="100%">
+      <Box flexDirection="column" width="100%" height="100%">
+      <Box flexDirection="column" gap={1} width="100%" flexGrow={1} overflow="hidden">
         <Box alignItems="center" gap={1}>
           <Text bold>SOURCE CONTROL</Text>
           <Box flexGrow={1} />
@@ -341,14 +371,32 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {header('graph', 'Graph')}
-        {isOpen('graph') && s.log.map((r: LogRow, i: number) => (
-          <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`}>
-            <Svg source={dot(s.log.length > 1)} alt="commit" width={14} height={22} />
-            <Text bold={i === 0} wrap="truncate-end">{r.subject}</Text>
-            {r.refs && <Text backgroundColor="#3794ff" color="black"> {r.refs.replace('HEAD -> ', '')} </Text>}
+      </Box>
+
+      <Box flexDirection="column" width="100%" borderStyle="single" borderColor="#3c3c3c">
+        <Box gap={1} alignItems="center">
+          {header('graph', 'Graph')}
+          <Box flexGrow={1} />
+          {isOpen('graph') && <Button key="shrink" label="▼" onPress={() => resize(-3)} />}
+          {isOpen('graph') && <Button key="grow" label="▲" onPress={() => resize(3)} />}
+        </Box>
+        {isOpen('graph') && (
+          <Box flexDirection="column" height={s.graphRows} overflow="hidden">
+            {s.log.map((r: LogRow, i: number) => {
+              const p = refPills(r.refs)
+              return (
+                <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`}>
+                  <Svg source={dot(s.log.length > 1)} alt="commit" width={14} height={22} />
+                  <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+                    <Text bold={i === 0} wrap="truncate-end">{r.subject}</Text>
+                  </Box>
+                  {p && <Box flexShrink={0}><Svg source={p.src} alt={r.refs} width={p.w} height={22} isInteractive /></Box>}
+                </Box>
+              )
+            })}
           </Box>
-        ))}
+        )}
+      </Box>
       </Box>
     )
   })
