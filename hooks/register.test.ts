@@ -16,7 +16,7 @@ test('parses status and conflicts', () => {
 test('ref pills', () => {
   expect(refPills('')).toBe(null)
   const p = refPills('HEAD -> main, origin/main, origin/HEAD, tag: v1')
-  expect(p!.src.includes('+1')).toBe(true)
+  expect(p!.src.includes('+3')).toBe(true)
   expect(p!.w > 0).toBe(true)
 })
 

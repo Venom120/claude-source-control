@@ -1,6 +1,6 @@
 {
   "name": "claude-source-control",
-  "version": "0.1.5",
+  "version": "0.1.0",
   "description": "VS Code-style Source Control pane for Claude Desktop: changes, diffs, commit/push/pull, AI commit messages, merge-conflict resolution.",
   "author": { "name": "Venom120" },
   "license": "MIT",

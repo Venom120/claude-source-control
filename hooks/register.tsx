@@ -93,7 +93,7 @@ const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 // Values from microsoft/vscode scm.css + scmHistory.ts: label = 18px high, radius 10, 12px text,
 // 3px-padded 12px branch icon, description capped at 100px, 4px gaps; colours chartsBlue/chartsPurple/#EA5C00.
 const BRANCH_ICON = '<path d="M4.5 3v7M4.5 10c0-3 5-1.5 5-5" stroke="#181818" stroke-width="1.1" fill="none"/><circle cx="4.5" cy="2.5" r="1.3" fill="#181818"/><circle cx="4.5" cy="10.5" r="1.3" fill="#181818"/><circle cx="9.5" cy="4.5" r="1.3" fill="#181818"/>'
-export function refPills(refs: string, tip?: string, max = 3): { src: string; w: number } | null {
+export function refPills(refs: string, tip?: string, max = 1): { src: string; w: number } | null {
   const raw = refs.split(', ').filter(Boolean)
   const headName = raw.find(r => r.startsWith('HEAD -> '))?.slice(8)
   const all = raw.map(r => r.replace('HEAD -> ', ''))
@@ -129,6 +129,13 @@ export const badge = (n: number) => {
     w,
     src: `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="18" viewBox="0 0 ${w} 18"><rect width="${w}" height="18" rx="9" fill="#4D4D4D"/><text x="${w / 2}" y="13" text-anchor="middle" fill="#fff" font-size="11" font-family="system-ui,sans-serif">${n}</text></svg>`,
   }
+}
+
+
+// commit subject drawn as an image so the hover title covers the text (Svg is the only element with hover tooltips)
+export const subjectSvg = (subject: string, isHead: boolean, tip: string) => {
+  const w = Math.round(subject.length * 7.4) + 8
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="22" viewBox="0 0 ${w} 22"><title>${titleText(tip)}</title><rect width="${w}" height="22" fill="transparent"/><text x="2" y="15.5" fill="#cccccc" font-size="13" font-weight="${isHead ? 600 : 400}" font-family="system-ui,sans-serif">${esc(subject)}</text></svg>`
 }
 
 const STATUS: Record<string, string> = { M: '#e2c08d', A: '#73c991', '?': '#73c991', D: '#c74e39', R: '#73c991', U: '#c74e39' }
@@ -232,7 +239,6 @@ export const register: Register = on => {
     await $.command.register({ name: 'source-control', description: 'Open the Source Control pane' })
     const saved = await $.store.get('root')
     if (typeof saved === 'string') await update($, sc, s => ({ ...s, root: saved }))
-    void $.ui.open({ id: PANE, title: 'Source Control' })
     await refresh($)
     return next(e)
   })
@@ -355,7 +361,7 @@ export const register: Register = on => {
       const name = en.path.slice(slash + 1)
       const dir = slash >= 0 ? en.path.slice(0, slash) : ''
       return (
-        <Box gap={1} alignItems="center" paddingLeft={2} key={`r${kind}${en.path}`}>
+        <Box gap={1} alignItems="center" paddingLeft={2} paddingRight={1} key={`r${kind}${en.path}`}>
           {ic(ICON.file, 'file')}
           <Button key={`${kind}${en.path}`} plain label={name} onPress={() => (kind === 'c' ? openConflict($, en.path) : openDiff($, en, kind === 's'))} />
           <Text dimColor wrap="truncate-start">{dir}</Text>
@@ -372,8 +378,8 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" width="100%" height={(e.props as any)?.scroll?.bodyRows ?? '100%'}>
       <Box flexDirection="column" gap={1} width="100%" flexGrow={1} overflow="hidden">
-        <Box alignItems="center" gap={1}>
-          <Text bold>SOURCE CONTROL</Text>
+        <Box alignItems="center" gap={1} flexWrap="wrap">
+          <Text bold wrap="truncate">SOURCE CONTROL</Text>
           <Box flexGrow={1} />
           {ic(ICON.branch, 'branch')}
           <Text bold>{s.branch}</Text>
@@ -384,12 +390,12 @@ export const register: Register = on => {
         {header('main', 'Changes')}
         {isOpen('main') && (
           <Box flexDirection="column" gap={1} paddingLeft={2}>
-            <Box gap={1} alignItems="center">
-              <Box flexGrow={1}>
+            <Box gap={1} alignItems="center" flexWrap="wrap">
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
                 <Input key="msg" placeholder={`Message (Ctrl+Enter to commit on "${s.branch}")`} value={s.msg} submitLabel="↵"
                   onInput={v => update($, sc, x => ({ ...x, msg: v }))} onSubmit={() => commit($, false, false)} />
               </Box>
-              <Button key="gen" label="✨" onPress={() => generate($)} />
+              <Button key="gen" label="✨ Generate" onPress={() => generate($)} />
             </Box>
             <Box gap={1} alignItems="center" width="100%">
               <Box flexGrow={1}>
@@ -428,12 +434,17 @@ export const register: Register = on => {
             {s.log.map((r: LogRow, i: number) => {
               const tip = commitTip(r)
               const p = refPills(r.refs, tip)
+              // ~8px per cell; room left after dot, padding, gaps, › button and the pills
+              const room = Math.max(60, ((e.props as any)?.bodyColumns ?? 50) * 8 - 75 - (p ? p.w : 0))
+              const max = Math.max(4, Math.floor(room / 7.4))
+              const shown = r.subject.length > max ? r.subject.slice(0, max - 1) + '…' : r.subject
               return (
                 <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`} hover={{ backgroundColor: '#2a2d2e' }}>
                   <Svg source={dot(s.log.length > 1, tip)} alt={r.subject} width={11} height={22} isInteractive />
                   <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-                    <Button key={`c${r.hash}`} plain label={r.subject} dimColor onPress={() => openCommit($, r)} />
+                    <Svg source={subjectSvg(shown, i === 0, tip)} alt={r.subject} width={Math.round(shown.length * 7.4) + 8} height={22} isInteractive />
                   </Box>
+                  <Button key={`c${r.hash}`} plain dimColor label="›" onPress={() => openCommit($, r)} />
                   {p && <Box flexShrink={0}><Svg source={p.src} alt={r.refs} width={p.w} height={22} isInteractive /></Box>}
                 </Box>
               )

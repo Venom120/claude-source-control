@@ -7,7 +7,7 @@ A VS Code-style **Source Control** pane for Claude Desktop, built as a Claude mo
 - Commit, Commit (Amend), Commit & Push, Commit & Sync, Push, Pull, Fetch, Undo Last Commit
 - ✨ AI-generated commit message from your diff
 - Merge-conflict resolution: Accept Current / Incoming / Both, or hand-edit, then Mark resolved
-- A **Source Control · branch · N** button above the prompt opens the pane; `/source-control` does too
+- A **Source Control · branch · N** button above the prompt opens the pane; `/source-control` does too (it never opens by itself)
 
 ## Install
 
@@ -18,7 +18,7 @@ In Claude Code / Claude Desktop:
 /plugin install claude-source-control@claude-source-control
 ```
 
-Restart the session; the pane opens automatically.
+Restart the session; the pane opens from the button above the prompt or `/source-control`.
 
 ## Use
 
@@ -36,3 +36,12 @@ claude plugin test .
 ```
 
 MIT licensed.
+
+## Update
+
+```
+claude plugin marketplace update claude-source-control
+claude plugin update claude-source-control@claude-source-control
+```
+
+Then restart Claude.
