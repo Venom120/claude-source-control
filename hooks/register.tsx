@@ -5,8 +5,8 @@ import type { Block, Entry, LogRow, SC, Seg } from '../types'
 
 const PANE = 'source-control'
 const init: SC = {
-  view: 'list', root: '', isRepo: true, branch: '', sync: '', entries: [], log: [], graphRows: 10, collapsed: [],
-  msg: '', pathInput: '', note: '', file: '', diff: '', segs: [], editing: -1,
+  view: 'list', root: '', isRepo: true, branch: '', sync: '', entries: [], log: [], graphRows: 10, midScroll: 0, graphScroll: 0, confirm: '', collapsed: [],
+  msg: '', msgRev: 0, simple: false, pathInput: '', note: '', file: '', diff: '', segs: [], editing: -1,
 }
 const sc = atom({ plugin: 'claude-source-control', key: 'sc' } as const, init)
 
@@ -174,6 +174,22 @@ async function openCommit($: any, r: LogRow) {
   await update($, sc, x => ({ ...x, view: 'commit', file: r.subject, diff: commitTip(r) + String.fromCharCode(10, 10) + s.stdout.trim() }))
 }
 
+// VS Code's "Discard Changes": tracked files are restored, untracked files deleted; asks twice because it can't be undone
+async function discard($: any, en: Entry) {
+  const s = await read($, sc)
+  if (s.confirm !== en.path) return update($, sc, x => ({ ...x, confirm: en.path, note: `Click again to discard ${en.path} (cannot be undone)` }))
+  await update($, sc, x => ({ ...x, confirm: '' }))
+  return act($, `Discarded ${en.path}`, en.y === '?' ? ['clean', '-f', '--', en.path] : ['restore', '--', en.path])
+}
+
+async function discardAll($: any) {
+  const s = await read($, sc)
+  if (s.confirm !== '*') return update($, sc, x => ({ ...x, confirm: '*', note: 'Choose Discard All Changes again to discard everything unstaged (cannot be undone)' }))
+  await update($, sc, x => ({ ...x, confirm: '' }))
+  await git($, ['restore', '--', '.'])
+  return act($, 'Discarded all changes', ['clean', '-f'])
+}
+
 async function openConflict($: any, path: string) {
   const { root } = await read($, sc)
   const base = root || (await $.session.cwd())
@@ -193,10 +209,11 @@ async function commit($: any, push: boolean, amend: boolean) {
   const s = await read($, sc)
   if (amend) return act($, 'Amended', s.msg.trim() ? ['commit', '--amend', '-m', s.msg] : ['commit', '--amend', '--no-edit'])
   if (!s.msg.trim()) return update($, sc, x => ({ ...x, note: 'Enter a commit message first' }))
-  if (!s.entries.some(e => e.x !== ' ' && e.x !== '?' && !isConflict(e))) await git($, ['add', '-A'])
+  // VS Code (smart commit off): never stage on the user's behalf
+  if (!s.entries.some(e => e.x !== ' ' && e.x !== '?' && !isConflict(e))) return update($, sc, x => ({ ...x, note: 'There are no staged changes to commit. Stage changes with + first.' }))
   const r = await act($, 'Committed', ['commit', '-m', s.msg])
   if (r.exitCode !== 0) return
-  await update($, sc, x => ({ ...x, msg: '' }))
+  await update($, sc, x => ({ ...x, msg: '', msgRev: x.msgRev + 1 }))
   if (push) await act($, 'Committed and pushed', ['push'])
 }
 
@@ -208,7 +225,7 @@ async function generate($: any) {
     model: 'claude-haiku-5-5',
     prompt: `Write a one-line conventional commit message for this diff. Reply with the message only.\n\n${diff.slice(0, 20000)}`,
   })
-  await update($, sc, s => ({ ...s, msg: r.isAnswered ? r.text.trim() : s.msg, note: r.isAnswered ? '' : 'Could not generate' }))
+  await update($, sc, s => ({ ...s, msg: r.isAnswered ? r.text.trim() : s.msg, msgRev: s.msgRev + 1, note: r.isAnswered ? '' : 'Could not generate' }))
 }
 
 async function menu($: any, v: string) {
@@ -224,6 +241,7 @@ async function menu($: any, v: string) {
   if (v === 'pull') return act($, 'Pulled', ['pull'])
   if (v === 'fetch') return act($, 'Fetched', ['fetch', '--all'])
   if (v === 'undo') return act($, 'Last commit undone (changes kept staged)', ['reset', '--soft', 'HEAD~1'])
+  if (v === 'discardall') return discardAll($)
   if (v === 'stageall') return act($, 'Staged all', ['add', '-A'])
   if (v === 'unstageall') return act($, 'Unstaged all', ['reset'])
 }
@@ -234,12 +252,70 @@ async function openRepo($: any, path: string) {
   await refresh($)
 }
 
+
+const ROW = 2 // every list row is drawn 2 cells high, so a window of N rows can be counted exactly
+const MORE = [
+  { value: 'commit', label: 'Commit' }, { value: 'amend', label: 'Commit (Amend)' },
+  { value: 'push', label: 'Commit & Push' }, { value: 'sync', label: 'Commit & Sync' },
+  { value: 'pushonly', label: 'Push' }, { value: 'pull', label: 'Pull' }, { value: 'fetch', label: 'Fetch' },
+  { value: 'undo', label: 'Undo Last Commit' }, { value: 'stageall', label: 'Stage All Changes' },
+  { value: 'discardall', label: 'Discard All Changes' }, { value: 'unstageall', label: 'Unstage All Changes' },
+]
+
+// lines the message box needs (soft-wrapped at ~42 columns)
+export const msgLinesOf = (msg: string) => msg.split(String.fromCharCode(10)).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 42)), 0)
+
+export type Layout = { top: number; mid: number; midItems: number; graph: number; graphItems: number }
+export function layout(bodyRows: number, msgLines: number, simple: boolean, hasNote: boolean, graphOpen: boolean, graphRows: number): Layout {
+  const msg = simple ? 3 : Math.min(msgLines, 8) + 2 + (msgLines > 8 ? 1 : 0)
+  const top = ROW + msg + ROW + (hasNote ? 1 : 0) + 1
+  const graph = graphOpen ? graphRows + ROW + 2 : ROW + 2
+  const mid = Math.max(ROW * 2, bodyRows - top - graph)
+  return { top, mid, midItems: Math.floor(mid / ROW), graph, graphItems: Math.floor(graphRows / ROW) }
+}
+
+type Item = { h?: { k: string; title: string; count?: number }; en?: Entry; kind?: 'c' | 's' | 'u' }
+export function flatten(s: SC): Item[] {
+  const conflicts = s.entries.filter(isConflict)
+  const staged = s.entries.filter(x => x.x !== ' ' && x.x !== '?' && !isConflict(x))
+  const changes = s.entries.filter(x => x.y !== ' ' && !isConflict(x))
+  const out: Item[] = []
+  const group = (k: string, title: string, list: Entry[], kind: 'c' | 's' | 'u', always: boolean) => {
+    if (!list.length && !always) return
+    out.push({ h: { k, title, count: list.length } })
+    if (!s.collapsed.includes(k)) list.forEach(en => out.push({ en, kind }))
+  }
+  group('conf', 'Merge Conflicts', conflicts, 'c', false)
+  group('staged', 'Staged Changes', staged, 's', false)
+  group('changes', 'Changes', changes, 'u', true)
+  return out
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'source-control', description: 'Open the Source Control pane' })
     const saved = await $.store.get('root')
     if (typeof saved === 'string') await update($, sc, s => ({ ...s, root: saved }))
+    const simple = await $.store.get('simpleInput')
+    if (simple === true) await update($, sc, s => ({ ...s, simple: true }))
+    await $.command.register({ name: 'source-control-simple', description: 'Toggle the plain single-line commit box (fallback)' })
     await refresh($)
+    return next(e)
+  })
+
+  on('command.run', { command: 'source-control-simple' }, async $ => {
+    const s = await read($, sc)
+    await $.store.set('simpleInput', !s.simple)
+    await update($, sc, x => ({ ...x, simple: !x.simple }))
+    return { text: s.simple ? 'Multi-line commit box on.' : 'Plain single-line commit box on.' }
+  })
+
+  // keystrokes from the multi-line box (hooks/msgbox.tsx)
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== 'msgbox') return next(e)
+    const d = e.data as { text?: string; commit?: boolean }
+    if (typeof d.text === 'string') await update($, sc, x => ({ ...x, msg: d.text as string }))
+    if (d.commit) await commit($, false, false)
     return next(e)
   })
 
@@ -251,6 +327,28 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     await refresh($) // Claude may have edited files
+    return next(e)
+  })
+
+  // wheel over the changes list or the graph moves that list's own window; elsewhere the engine's scroll stands
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const ptr = e.pointer
+    if (!ptr || e.origin.kind !== 'person') return next(e)
+    const s = await read($, sc)
+    if (s.view !== 'list' || !s.isRepo) return next(e)
+    const open = !s.collapsed.includes('graph')
+    const L = layout(e.bodyRows, msgLinesOf(s.msg), s.simple, !!s.note, open, s.graphRows)
+    const step = e.by < 0 ? -1 : 1
+    if (ptr.row >= L.top && ptr.row < L.top + L.mid) {
+      const max = Math.max(0, flatten(s).length - L.midItems)
+      await update($, sc, x => ({ ...x, midScroll: Math.min(max, Math.max(0, x.midScroll + step)) }))
+      return {}
+    }
+    if (open && ptr.row >= L.top + L.mid + ROW + 1) {
+      const max = Math.max(0, s.log.length - L.graphItems)
+      await update($, sc, x => ({ ...x, graphScroll: Math.min(max, Math.max(0, x.graphScroll + step)) }))
+      return {}
+    }
     return next(e)
   })
 
@@ -267,7 +365,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Input, Select, Svg, Code } = $.ui.resolve(e) as any
+    const { Box, Text, Button, Input, Select, Svg, Code, Client } = $.ui.resolve(e) as any
     const s = await read($, sc)
     const ic = (src: string, alt: string) => <Svg source={src} alt={alt} width={16} height={16} />
     const back = <Button key="back" label="← Back" onPress={() => update($, sc, x => ({ ...x, view: 'list' }))} />
@@ -341,117 +439,104 @@ export const register: Register = on => {
       )
     }
 
-    const conflicts = s.entries.filter(isConflict)
-    const staged = s.entries.filter(x => x.x !== ' ' && x.x !== '?' && !isConflict(x))
-    const changes = s.entries.filter(x => x.y !== ' ' && !isConflict(x))
     const isOpen = (k: string) => !s.collapsed.includes(k)
     const toggle = (k: string) => update($, sc, x => ({ ...x, collapsed: x.collapsed.includes(k) ? x.collapsed.filter(c => c !== k) : [...x.collapsed, k] }))
+    const bodyRows = (e.props as any)?.scroll?.bodyRows ?? 40
+    const L = layout(bodyRows, msgLinesOf(s.msg), s.simple, !!s.note, isOpen('graph'), s.graphRows)
+    const items = flatten(s)
+    const ms = Math.min(s.midScroll, Math.max(0, items.length - L.midItems))
+    const gs = Math.min(s.graphScroll, Math.max(0, s.log.length - L.graphItems))
+    const resize = (d: number) => update($, sc, x => ({ ...x, graphRows: Math.min(30, Math.max(4, x.graphRows + d)) }))
 
-    const header = (k: string, title: string, count?: number, tint?: string) => (
-      <Box gap={1} alignItems="center" key={`h${k}`}>
-        {ic(isOpen(k) ? ICON.down : ICON.right, 'toggle')}
-        <Button key={`t${k}`} plain label={title} onPress={() => toggle(k)} />
+    const header = (k: string, title: string, count?: number) => (
+      <Box gap={1} alignItems="center" height={ROW} key={`h${k}`}>
+        <Button key={`t${k}`} plain label={`${isOpen(k) ? '▾' : '▸'}  ${title}`} onPress={() => toggle(k)} />
         {count !== undefined && <Svg source={badge(count).src} alt={`${count}`} width={badge(count).w} height={18} />}
       </Box>
     )
 
     const row = (en: Entry, kind: 'c' | 's' | 'u') => {
       const code = kind === 'c' ? 'U' : kind === 's' ? en.x : en.y === '?' ? 'U' : en.y
-      const slash = Math.max(en.path.lastIndexOf('/'), en.path.lastIndexOf('\\'))
+      const slash = Math.max(en.path.lastIndexOf('/'), en.path.lastIndexOf(String.fromCharCode(92)))
       const name = en.path.slice(slash + 1)
       const dir = slash >= 0 ? en.path.slice(0, slash) : ''
       return (
-        <Box gap={1} alignItems="center" paddingLeft={2} paddingRight={1} key={`r${kind}${en.path}`}>
+        <Box gap={1} alignItems="center" height={ROW} paddingLeft={2} paddingRight={1} key={`r${kind}${en.path}`}>
           {ic(ICON.file, 'file')}
           <Button key={`${kind}${en.path}`} plain label={name} onPress={() => (kind === 'c' ? openConflict($, en.path) : openDiff($, en, kind === 's'))} />
           <Text dimColor wrap="truncate-start">{dir}</Text>
           <Box flexGrow={1} />
           {kind === 's' && <Button key={`un${en.path}`} label="−" onPress={() => act($, 'Unstaged', ['restore', '--staged', '--', en.path])} />}
+          {kind === 'u' && <Button key={`ds${en.path}`} label={s.confirm === en.path ? 'Discard?' : '↩'} onPress={() => discard($, en)} />}
           {kind === 'u' && <Button key={`st${en.path}`} label="+" onPress={() => act($, 'Staged', ['add', '--', en.path])} />}
           <Text bold color={kind === 'c' ? '#c74e39' : (STATUS[code] ?? '#e2c08d')}>{code}</Text>
         </Box>
       )
     }
 
-    const resize = (d: number) => update($, sc, x => ({ ...x, graphRows: Math.min(30, Math.max(3, x.graphRows + d)) }))
-
+    // three fixed regions: top (header, message, buttons), middle (changes, wheel-scrolled), bottom (graph, wheel-scrolled)
     return (
-      <Box flexDirection="column" width="100%" height={(e.props as any)?.scroll?.bodyRows ?? '100%'}>
-      <Box flexDirection="column" gap={1} width="100%" flexGrow={1} overflow="hidden">
-        <Box alignItems="center" gap={1} flexWrap="wrap">
-          <Text bold wrap="truncate">SOURCE CONTROL</Text>
-          <Box flexGrow={1} />
-          {ic(ICON.branch, 'branch')}
-          <Text bold>{s.branch}</Text>
-          {s.sync && <Text dimColor>{s.sync}</Text>}
-          <Button key="refresh" label="Refresh" onPress={() => refresh($)} />
-        </Box>
-
-        {header('main', 'Changes')}
-        {isOpen('main') && (
-          <Box flexDirection="column" gap={1} paddingLeft={2}>
-            <Box gap={1} alignItems="center" flexWrap="wrap">
-              <Box flexGrow={1} flexShrink={1} minWidth={0}>
-                <Input key="msg" placeholder={`Message (Ctrl+Enter to commit on "${s.branch}")`} value={s.msg} submitLabel="↵"
-                  onInput={v => update($, sc, x => ({ ...x, msg: v }))} onSubmit={() => commit($, false, false)} />
-              </Box>
-              <Button key="gen" label="✨ Generate" onPress={() => generate($)} />
-            </Box>
-            <Box gap={1} alignItems="center" width="100%">
-              <Box flexGrow={1}>
-                <Button key="commit" variant="primary" label="✓ Commit" onPress={() => commit($, false, false)} />
-              </Box>
-              <Select key="more" options={[
-                { value: 'commit', label: 'Commit' }, { value: 'amend', label: 'Commit (Amend)' },
-                { value: 'push', label: 'Commit & Push' }, { value: 'sync', label: 'Commit & Sync' },
-                { value: 'pushonly', label: 'Push' }, { value: 'pull', label: 'Pull' }, { value: 'fetch', label: 'Fetch' },
-                { value: 'undo', label: 'Undo Last Commit' }, { value: 'stageall', label: 'Stage All Changes' }, { value: 'unstageall', label: 'Unstage All Changes' },
-              ]} onSelect={v => menu($, v)} />
-            </Box>
-            {s.note && <Text dimColor>{s.note}</Text>}
-
-            {conflicts.length > 0 && header('conf', 'Merge Conflicts', conflicts.length, '#c74e39')}
-            {conflicts.length > 0 && isOpen('conf') && conflicts.map(x => row(x, 'c'))}
-            {staged.length > 0 && header('staged', 'Staged Changes', staged.length)}
-            {staged.length > 0 && isOpen('staged') && staged.map(x => row(x, 's'))}
-            {header('changes', 'Changes', changes.length)}
-            {isOpen('changes') && changes.map(x => row(x, 'u'))}
-            {s.entries.length === 0 && <Text dimColor>No changes.</Text>}
+      <Box flexDirection="column" width="100%" height={bodyRows}>
+        <Box flexDirection="column" width="100%" height={L.top} overflow="hidden">
+          <Box alignItems="center" gap={1} height={ROW}>
+            <Box flexGrow={1} />
+            {ic(ICON.branch, 'branch')}
+            <Button key="branch-toggle" plain label={s.branch} onPress={() => toggle('graph')} />
+            {s.sync && <Text dimColor>{s.sync}</Text>}
+            <Button key="refresh" label="Refresh" onPress={() => refresh($)} />
           </Box>
-        )}
-
-      </Box>
-
-      <Box flexDirection="column" width="100%" borderStyle="single" borderColor="#3c3c3c">
-        <Box gap={1} alignItems="center">
-          {header('graph', 'Graph')}
-          <Box flexGrow={1} />
-          {isOpen('graph') && <Button key="shrink" label="▼" onPress={() => resize(-3)} />}
-          {isOpen('graph') && <Button key="grow" label="▲" onPress={() => resize(3)} />}
+          {s.simple ? (
+            <Input key="msg" placeholder={`Message (click Commit to commit on "${s.branch}")`} value={s.msg}
+              onInput={v => update($, sc, x => ({ ...x, msg: v }))} onSubmit={() => {}} />
+          ) : (
+            <Client key="msgbox" module="./msgbox.tsx" width="100%"
+              props={{ value: s.msg, rev: s.msgRev, placeholder: `Message (Ctrl+Enter to commit on "${s.branch}")`, maxRows: 8 }} />
+          )}
+          <Box gap={1} alignItems="center" width="100%" height={ROW}>
+            <Button key="commit" variant="primary" label="✓ Commit" onPress={() => commit($, false, false)} />
+            <Box flexGrow={1} />
+            <Button key="gen" label="✨ Generate" onPress={() => generate($)} />
+            <Select key="more" options={MORE} onSelect={v => menu($, v)} />
+          </Box>
+          {s.note && <Text dimColor>{s.note}</Text>}
         </Box>
-        {isOpen('graph') && (
-          <Box flexDirection="column" height={s.graphRows} overflow="hidden">
-            {s.log.map((r: LogRow, i: number) => {
-              const tip = commitTip(r)
-              const p = refPills(r.refs, tip)
-              // ~8px per cell; room left after dot, padding, gaps, › button and the pills
-              const room = Math.max(60, ((e.props as any)?.bodyColumns ?? 50) * 8 - 75 - (p ? p.w : 0))
-              const max = Math.max(4, Math.floor(room / 7.4))
-              const shown = r.subject.length > max ? r.subject.slice(0, max - 1) + '…' : r.subject
-              return (
-                <Box gap={1} alignItems="center" paddingLeft={2} key={`g${r.hash}`} hover={{ backgroundColor: '#2a2d2e' }}>
-                  <Svg source={dot(s.log.length > 1, tip)} alt={r.subject} width={11} height={22} isInteractive />
-                  <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-                    <Svg source={subjectSvg(shown, i === 0, tip)} alt={r.subject} width={Math.round(shown.length * 7.4) + 8} height={22} isInteractive />
+
+        <Box flexDirection="column" width="100%" height={L.mid} overflow="hidden">
+          {items.slice(ms, ms + L.midItems).map(it => (it.h ? header(it.h.k, it.h.title, it.h.count) : row(it.en as Entry, it.kind as 'c' | 's' | 'u')))}
+          {s.entries.length === 0 && <Text dimColor>No changes.</Text>}
+          {items.length > L.midItems && <Text dimColor>{`${ms + 1}-${Math.min(items.length, ms + L.midItems)} of ${items.length} · scroll with the wheel`}</Text>}
+        </Box>
+
+        <Box flexDirection="column" width="100%" height={L.graph} borderStyle="single" borderColor="#3c3c3c" overflow="hidden">
+          <Box gap={1} alignItems="center" height={ROW}>
+            {header('graph', 'Graph')}
+            <Box flexGrow={1} />
+            {isOpen('graph') && <Button key="shrink" label="▼" onPress={() => resize(-2)} />}
+            {isOpen('graph') && <Button key="grow" label="▲" onPress={() => resize(2)} />}
+          </Box>
+          {isOpen('graph') && (
+            <Box flexDirection="column" height={s.graphRows} overflow="hidden">
+              {s.log.slice(gs, gs + L.graphItems).map((r: LogRow, i: number) => {
+                const tip = commitTip(r)
+                const p = refPills(r.refs, tip)
+                // ~8px per cell; room left after dot, padding, gaps, › button and the pills
+                const room = Math.max(60, ((e.props as any)?.bodyColumns ?? 50) * 8 - 75 - (p ? p.w : 0))
+                const max = Math.max(4, Math.floor(room / 7.4))
+                const shown = r.subject.length > max ? r.subject.slice(0, max - 1) + '…' : r.subject
+                return (
+                  <Box gap={1} alignItems="center" height={ROW} paddingLeft={2} key={`g${r.hash}`} hover={{ backgroundColor: '#2a2d2e' }}>
+                    <Svg source={dot(s.log.length > 1, tip)} alt={r.subject} width={11} height={22} isInteractive />
+                    <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+                      <Svg source={subjectSvg(shown, gs + i === 0, tip)} alt={r.subject} width={Math.round(shown.length * 7.4) + 8} height={22} isInteractive />
+                    </Box>
+                    <Button key={`c${r.hash}`} plain dimColor label="›" onPress={() => openCommit($, r)} />
+                    {p && <Box flexShrink={0}><Svg source={p.src} alt={r.refs} width={p.w} height={22} isInteractive /></Box>}
                   </Box>
-                  <Button key={`c${r.hash}`} plain dimColor label="›" onPress={() => openCommit($, r)} />
-                  {p && <Box flexShrink={0}><Svg source={p.src} alt={r.refs} width={p.w} height={22} isInteractive /></Box>}
-                </Box>
-              )
-            })}
-          </Box>
-        )}
-      </Box>
+                )
+              })}
+            </Box>
+          )}
+        </Box>
       </Box>
     )
   })

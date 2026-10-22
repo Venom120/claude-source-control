@@ -11,8 +11,13 @@ export type SC = {
   entries: Entry[]
   log: LogRow[]
   graphRows: number
+  midScroll: number
+  graphScroll: number
+  confirm: string
   collapsed: string[]
   msg: string
+  msgRev: number
+  simple: boolean
   pathInput: string
   note: string
   file: string

@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { parseStatus, parseConflicts, joinSegs, refPills, parseLog, commitTip } from './register'
+import { parseStatus, parseConflicts, joinSegs, refPills, parseLog, commitTip, layout, msgLinesOf } from './register'
 
 test('parses status and conflicts', () => {
   const s = parseStatus('## main...origin/main [ahead 1]\nUU a.txt\n M b.txt\n?? c.txt\n')
@@ -29,4 +29,11 @@ test('log hover', () => {
   expect(r.subject).toBe('fix: thing')
   expect(commitTip(r).includes('2 files changed')).toBe(true)
   expect(commitTip(r).includes('long body')).toBe(true)
+})
+
+test('layout adds up to the pane height', () => {
+  const L = layout(40, msgLinesOf(''), false, false, true, 10)
+  expect(L.top + L.mid + L.graph).toBe(40)
+  expect(L.midItems > 0).toBe(true)
+  expect(layout(40, 1, false, false, false, 10).graph < L.graph).toBe(true)
 })
