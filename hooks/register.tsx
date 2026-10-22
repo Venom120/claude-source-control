@@ -477,7 +477,7 @@ export const register: Register = on => {
     // three fixed regions: top (header, message, buttons), middle (changes, wheel-scrolled), bottom (graph, wheel-scrolled)
     return (
       <Box flexDirection="column" width="100%" height={bodyRows}>
-        <Box flexDirection="column" width="100%" height={L.top} overflow="hidden">
+        <Box flexDirection="column" width="100%" flexShrink={0}>
           <Box alignItems="center" gap={1} height={ROW}>
             <Box flexGrow={1} />
             {ic(ICON.branch, 'branch')}
@@ -501,13 +501,13 @@ export const register: Register = on => {
           {s.note && <Text dimColor>{s.note}</Text>}
         </Box>
 
-        <Box flexDirection="column" width="100%" height={L.mid} overflow="hidden">
+        <Box flexDirection="column" width="100%" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
           {items.slice(ms, ms + L.midItems).map(it => (it.h ? header(it.h.k, it.h.title, it.h.count) : row(it.en as Entry, it.kind as 'c' | 's' | 'u')))}
           {s.entries.length === 0 && <Text dimColor>No changes.</Text>}
           {items.length > L.midItems && <Text dimColor>{`${ms + 1}-${Math.min(items.length, ms + L.midItems)} of ${items.length} · scroll with the wheel`}</Text>}
         </Box>
 
-        <Box flexDirection="column" width="100%" height={L.graph} borderStyle="single" borderColor="#3c3c3c" overflow="hidden">
+        <Box flexDirection="column" width="100%" flexShrink={0} borderStyle="single" borderColor="#3c3c3c">
           <Box gap={1} alignItems="center" height={ROW}>
             {header('graph', 'Graph')}
             <Box flexGrow={1} />
