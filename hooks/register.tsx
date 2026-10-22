@@ -519,8 +519,8 @@ export const register: Register = on => {
               {s.log.slice(gs, gs + L.graphItems).map((r: LogRow, i: number) => {
                 const tip = commitTip(r)
                 const p = refPills(r.refs, tip)
-                // ~8px per cell; room left after dot, padding, gaps, › button and the pills
-                const room = Math.max(60, ((e.props as any)?.bodyColumns ?? 50) * 8 - 75 - (p ? p.w : 0))
+                // ~6px per cell (deliberately low: an image wider than its slot is scaled down, which made text sizes vary); room left after dot, padding, gaps, › button and the pills
+                const room = Math.max(60, ((e.props as any)?.bodyColumns ?? 50) * 6 - 75 - (p ? p.w : 0))
                 const max = Math.max(4, Math.floor(room / 7.4))
                 const shown = r.subject.length > max ? r.subject.slice(0, max - 1) + '…' : r.subject
                 return (
